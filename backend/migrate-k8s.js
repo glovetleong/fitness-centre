@@ -3,7 +3,7 @@
  * Run once: kubectl apply -f deploy/k8s/migrate-job.yaml
  */
 import mysql from 'mysql2/promise'
-import bcrypt from 'bcrypt'
+import bcrypt from 'bcryptjs'
 import { faker } from '@faker-js/faker'
 
 const config = {
