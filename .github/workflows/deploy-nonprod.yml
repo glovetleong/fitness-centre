@@ -206,6 +206,7 @@ jobs:
           kubectl wait --for=condition=Established crd/clustersecretstores.external-secrets.io --timeout=180s
           kubectl wait --for=condition=Established crd/externalsecrets.external-secrets.io --timeout=180s
           kubectl rollout status deployment/external-secrets -n external-secrets --timeout=300s
+          kubectl api-resources --api-group=external-secrets.io
 
       - name: Sync secrets from AWS Secrets Manager
         if: env.USE_RDS == 'true'
@@ -213,6 +214,10 @@ jobs:
           SECRET_NAME: ${{ vars.FITNESS_APP_SECRET_NAME || secrets.FITNESS_APP_SECRET_NAME }}
         run: |
           test -n "$SECRET_NAME" || { echo "Set repository variable FITNESS_APP_SECRET_NAME (e.g. non-prod/fitness-centre/app)"; exit 1; }
+          kubectl api-resources --api-group=external-secrets.io | grep -q 'clustersecretstores' || {
+            echo "::error::ClusterSecretStore CRD missing — check Install External Secrets Operator step"
+            exit 1
+          }
           kubectl apply -f deploy/k8s/pre/cluster-secret-store.yaml
           sed "s|REPLACE_SECRET_MANAGER_NAME|$SECRET_NAME|g" deploy/k8s/pre/external-secret.yaml | kubectl apply -f -
           kubectl wait --for=condition=Ready externalsecret/fitness-centre-app \
