@@ -38,7 +38,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: backend
@@ -61,7 +61,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: frontend
@@ -108,7 +108,7 @@ jobs:
           echo "IMAGE_TAG=$TAG" >> "$GITHUB_ENV"
 
       - name: Trivy scan backend image
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.BACKEND_IMAGE }}
           severity: CRITICAL,HIGH
@@ -126,7 +126,7 @@ jobs:
           echo "FRONTEND_IMAGE=$IMAGE:$TAG" >> "$GITHUB_ENV"
 
       - name: Trivy scan frontend image
-        uses: aquasecurity/trivy-action@0.36.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.FRONTEND_IMAGE }}
           severity: CRITICAL,HIGH
