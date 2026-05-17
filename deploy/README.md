@@ -61,6 +61,19 @@ App URL: `kubectl get ingress fitness-centre -n fitness-centre` → use **http:/
 
 **Login:** `admin@example.com` / `admin123`
 
+## Observability (Terraform)
+
+After `terraform apply`, open CloudWatch → **Dashboards** → `non-prod-fitness-platform`.
+
+Alarms (RDS CPU/storage/connections, EKS node CPU/ASG health) publish to SNS topic `non-prod-platform-alarms`. Optional email:
+
+```hcl
+# nonprod.tfvars
+alarm_notification_email = "you@example.com"
+```
+
+Confirm the SNS subscription email after apply.
+
 ## Layout
 
 ```text
