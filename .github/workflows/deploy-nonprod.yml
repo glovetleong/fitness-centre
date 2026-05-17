@@ -64,7 +64,7 @@ jobs:
           echo "IMAGE_TAG=$TAG" >> "$GITHUB_ENV"
 
       - name: Trivy scan backend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: ${{ env.BACKEND_IMAGE }}
           severity: CRITICAL,HIGH
@@ -82,7 +82,7 @@ jobs:
           echo "FRONTEND_IMAGE=$IMAGE:$TAG" >> "$GITHUB_ENV"
 
       - name: Trivy scan frontend image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@0.36.0
         with:
           image-ref: ${{ env.FRONTEND_IMAGE }}
           severity: CRITICAL,HIGH
