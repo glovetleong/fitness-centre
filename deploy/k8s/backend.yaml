@@ -17,6 +17,9 @@ metadata:
   namespace: fitness-centre
 spec:
   replicas: 1
+  # Avoid 2 backend pods during rollout (t3.small pod limit / single replica).
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: backend
@@ -47,15 +50,18 @@ spec:
               value: "3000"
             - name: CORS_ORIGIN
               value: "*"
+          startupProbe:
+            tcpSocket:
+              port: 3000
+            failureThreshold: 30
+            periodSeconds: 5
           readinessProbe:
             tcpSocket:
               port: 3000
-            initialDelaySeconds: 10
             periodSeconds: 10
           livenessProbe:
             tcpSocket:
               port: 3000
-            initialDelaySeconds: 30
             periodSeconds: 20
           resources:
             requests:
@@ -63,4 +69,4 @@ spec:
               memory: 128Mi
             limits:
               cpu: 300m
-              memory: 256Mi
+              memory: 384Mi

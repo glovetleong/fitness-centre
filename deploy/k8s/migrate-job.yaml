@@ -12,10 +12,19 @@ spec:
         app.kubernetes.io/part-of: fitness-centre
     spec:
       restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: migrate
           image: REPLACE_BACKEND_IMAGE
           command: ["node", "migrate-k8s.js"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           envFrom:
             - secretRef:
                 name: fitness-centre-app

@@ -274,8 +274,17 @@ jobs:
           sed "s|REPLACE_BACKEND_IMAGE|${BACKEND_IMAGE}|g" deploy/k8s/backend.yaml | kubectl apply -f -
           sed "s|REPLACE_FRONTEND_IMAGE|${FRONTEND_IMAGE}|g" deploy/k8s/frontend.yaml | kubectl apply -f -
           kubectl apply -f deploy/k8s/backend-hpa.yaml
-          kubectl rollout status deployment/backend -n "${{ env.K8S_NAMESPACE }}" --timeout=300s
-          kubectl rollout status deployment/frontend -n "${{ env.K8S_NAMESPACE }}" --timeout=300s
+          kubectl rollout status deployment/backend -n "${{ env.K8S_NAMESPACE }}" --timeout=300s || {
+            kubectl get pods -n "${{ env.K8S_NAMESPACE }}" -l app=backend -o wide
+            kubectl describe pods -n "${{ env.K8S_NAMESPACE }}" -l app=backend | tail -80
+            kubectl logs -n "${{ env.K8S_NAMESPACE }}" -l app=backend --tail=80 --all-containers=true || true
+            exit 1
+          }
+          kubectl rollout status deployment/frontend -n "${{ env.K8S_NAMESPACE }}" --timeout=300s || {
+            kubectl get pods -n "${{ env.K8S_NAMESPACE }}" -l app=frontend -o wide
+            kubectl logs -n "${{ env.K8S_NAMESPACE }}" -l app=frontend --tail=50 || true
+            exit 1
+          }
 
       - name: Deploy Ingress (PRE — WAF / optional HTTPS)
         if: env.USE_RDS == 'true'

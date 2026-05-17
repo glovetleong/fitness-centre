@@ -17,6 +17,7 @@ RUN apt-get update \
 
 WORKDIR /app
 ENV NODE_ENV=production
-COPY --from=build /app /app
+# SEC: app files must be readable by non-root USER node (pod runAsNonRoot).
+COPY --chown=node:node --from=build /app /app
 USER node
 CMD ["node", "server.js"]
