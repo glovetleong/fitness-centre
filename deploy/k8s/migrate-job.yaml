@@ -1,0 +1,17 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fitness-centre-migrate
+  namespace: fitness-centre
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: REPLACE_BACKEND_IMAGE
+          command: ["node", "migrate-k8s.js"]
+          envFrom:
+            - secretRef:
+                name: fitness-centre-app

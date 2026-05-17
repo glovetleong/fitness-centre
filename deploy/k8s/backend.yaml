@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: fitness-centre
+spec:
+  ports:
+    - port: 3000
+      targetPort: 3000
+  selector:
+    app: backend
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: fitness-centre
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: REPLACE_BACKEND_IMAGE
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - secretRef:
+                name: fitness-centre-app
+          env:
+            - name: PORT
+              value: "3000"
+            - name: CORS_ORIGIN
+              value: "*"
+          readinessProbe:
+            tcpSocket:
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi

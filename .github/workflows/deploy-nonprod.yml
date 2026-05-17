@@ -1,0 +1,128 @@
+# Build fitness-centre images, push to ECR, deploy to non-prod EKS.
+# SEC: AWS access via OIDC (no access keys in the workflow file).
+
+name: Deploy non-prod
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-southeast-1
+  AWS_ACCOUNT_ID: "956314528442"
+  EKS_CLUSTER_NAME: non-prod-eks
+  K8S_NAMESPACE: fitness-centre
+  ECR_BACKEND_REPO: fitness-centre/backend
+  ECR_FRONTEND_REPO: fitness-centre/frontend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR repositories exist
+        run: |
+          aws ecr describe-repositories --repository-names "${{ env.ECR_BACKEND_REPO }}" 2>/dev/null \
+            || aws ecr create-repository --repository-name "${{ env.ECR_BACKEND_REPO }}" --image-scanning-configuration scanOnPush=true
+          aws ecr describe-repositories --repository-names "${{ env.ECR_FRONTEND_REPO }}" 2>/dev/null \
+            || aws ecr create-repository --repository-name "${{ env.ECR_FRONTEND_REPO }}" --image-scanning-configuration scanOnPush=true
+
+      - name: Build and push backend image
+        env:
+          IMAGE: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_BACKEND_REPO }}
+        run: |
+          TAG="${{ github.sha }}"
+          docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" ./backend
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:latest"
+          echo "BACKEND_IMAGE=$IMAGE:$TAG" >> "$GITHUB_ENV"
+
+      - name: Build and push frontend image
+        env:
+          IMAGE: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_FRONTEND_REPO }}
+        run: |
+          TAG="${{ github.sha }}"
+          docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" ./frontend
+          docker push "$IMAGE:$TAG"
+          docker push "$IMAGE:latest"
+          echo "FRONTEND_IMAGE=$IMAGE:$TAG" >> "$GITHUB_ENV"
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig --name "${{ env.EKS_CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}"
+
+      - name: Apply namespace
+        run: kubectl apply -f deploy/k8s/namespace.yaml
+
+      - name: Apply application secrets
+        env:
+          DB_PASS: ${{ secrets.DB_PASS }}
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: |
+          kubectl create secret generic fitness-centre-app \
+            --namespace="${{ env.K8S_NAMESPACE }}" \
+            --from-literal=DB_HOST=mysql \
+            --from-literal=DB_USER=fitness \
+            --from-literal=DB_PASS="$DB_PASS" \
+            --from-literal=DB_NAME=fitness_centre \
+            --from-literal=JWT_SECRET="$JWT_SECRET" \
+            --from-literal=MYSQL_ROOT_PASSWORD="$MYSQL_ROOT_PASSWORD" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy MySQL
+        run: kubectl apply -f deploy/k8s/mysql.yaml
+
+      - name: Wait for MySQL
+        run: |
+          kubectl wait --for=condition=ready pod -l app=mysql \
+            -n "${{ env.K8S_NAMESPACE }}" --timeout=600s
+
+      - name: Run database migration
+        run: |
+          kubectl delete job fitness-centre-migrate -n "${{ env.K8S_NAMESPACE }}" --ignore-not-found
+          sed "s|REPLACE_BACKEND_IMAGE|${BACKEND_IMAGE}|g" deploy/k8s/migrate-job.yaml | kubectl apply -f -
+          kubectl wait --for=condition=complete job/fitness-centre-migrate \
+            -n "${{ env.K8S_NAMESPACE }}" --timeout=600s || {
+              kubectl logs -n "${{ env.K8S_NAMESPACE }}" job/fitness-centre-migrate --tail=100
+              exit 1
+            }
+
+      - name: Deploy backend and frontend
+        run: |
+          sed "s|REPLACE_BACKEND_IMAGE|${BACKEND_IMAGE}|g" deploy/k8s/backend.yaml | kubectl apply -f -
+          sed "s|REPLACE_FRONTEND_IMAGE|${FRONTEND_IMAGE}|g" deploy/k8s/frontend.yaml | kubectl apply -f -
+          kubectl rollout status deployment/backend -n "${{ env.K8S_NAMESPACE }}" --timeout=300s
+          kubectl rollout status deployment/frontend -n "${{ env.K8S_NAMESPACE }}" --timeout=300s
+
+      - name: Deploy Ingress (ALB)
+        run: kubectl apply -f deploy/k8s/ingress.yaml
+
+      - name: Deployment summary
+        run: |
+          echo "## Deployed images" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Backend: \`${BACKEND_IMAGE}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Frontend: \`${FRONTEND_IMAGE}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Ingress" >> "$GITHUB_STEP_SUMMARY"
+          kubectl get ingress -n "${{ env.K8S_NAMESPACE }}" -o wide >> "$GITHUB_STEP_SUMMARY"
