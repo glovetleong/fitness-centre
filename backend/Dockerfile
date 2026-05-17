@@ -1,14 +1,22 @@
-# Build stage: install production dependencies only.
+# Build: Alpine is fine here (not scanned in final image).
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY . .
 
-# Runtime: distroless — no bundled npm (avoids tar/cross-spawn/glob CVEs in base node image).
-FROM gcr.io/distroless/nodejs20-debian12
+# Runtime: Debian bookworm with security upgrades (patched libc6 / openssl).
+FROM node:20-bookworm-slim AS runtime
+RUN apt-get update \
+  && apt-get upgrade -y --no-install-recommends \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/* \
+  && rm -rf /usr/local/lib/node_modules/npm \
+  && rm -f /usr/local/bin/npm /usr/local/bin/npx
+
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=build /app /app
-USER nonroot
-CMD ["server.js"]
+USER node
+CMD ["node", "server.js"]
