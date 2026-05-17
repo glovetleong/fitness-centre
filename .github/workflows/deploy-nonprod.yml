@@ -301,7 +301,11 @@ jobs:
                 -e "s|REPLACE_ACM_CERT_ARN|$ACM_CERTIFICATE_ARN|g" \
                 deploy/k8s/ingress-pre.yaml | kubectl apply -f -
           else
+            echo "HTTP-only ingress (no ACM_CERTIFICATE_ARN)."
             sed "s|REPLACE_WAF_ACL_ARN|$WAF_ACL_ARN|g" deploy/k8s/ingress-pre-http.yaml | kubectl apply -f -
+            kubectl annotate ingress fitness-centre -n "${{ env.K8S_NAMESPACE }}" \
+              alb.ingress.kubernetes.io/ssl-redirect- \
+              alb.ingress.kubernetes.io/certificate-arn- --overwrite || true
           fi
 
       - name: Deploy Ingress (PoC HTTP)
