@@ -22,6 +22,8 @@ spec:
           image: REPLACE_BACKEND_IMAGE
           command: ["node", "migrate-k8s.js"]
           securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
