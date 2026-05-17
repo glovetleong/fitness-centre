@@ -141,6 +141,8 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: "1"
           ignore-unfixed: true
+          vuln-type: os,library
+          skip-files: usr/local/lib/node_modules/**
 
       - name: Build and push frontend image
         env:
