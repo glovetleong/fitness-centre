@@ -90,6 +90,14 @@ jobs:
             --from-literal=MYSQL_ROOT_PASSWORD="$MYSQL_ROOT_PASSWORD" \
             --dry-run=client -o yaml | kubectl apply -f -
 
+      - name: Prepare node capacity (t3.small max 11 pods)
+        run: |
+          kubectl scale deployment ebs-csi-controller -n kube-system --replicas=1 || true
+          kubectl rollout status deployment/ebs-csi-controller -n kube-system --timeout=120s || true
+
+      - name: Deploy MySQL PVC
+        run: kubectl apply -f deploy/k8s/mysql-pvc.yaml
+
       - name: Deploy MySQL
         run: kubectl apply -f deploy/k8s/mysql.yaml
 

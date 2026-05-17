@@ -1,3 +1,4 @@
+# Apply mysql-pvc.yaml before this file (workflow order).
 apiVersion: v1
 kind: Service
 metadata:
@@ -56,25 +57,12 @@ spec:
               mountPath: /var/lib/mysql
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 50m
+              memory: 128Mi
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: 300m
+              memory: 384Mi
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: mysql-data
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: mysql-data
-  namespace: fitness-centre
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: gp2
-  resources:
-    requests:
-      storage: 10Gi
