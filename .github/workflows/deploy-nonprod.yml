@@ -10,7 +10,9 @@ on:
     branches: [master, main]
   workflow_dispatch:
 
+# SEC: id-token required for OIDC → AWS (build-and-deploy job).
 permissions:
+  id-token: write
   contents: read
 
 env:
@@ -20,7 +22,8 @@ env:
   K8S_NAMESPACE: fitness-centre
   ECR_BACKEND_REPO: fitness-centre/backend
   ECR_FRONTEND_REPO: fitness-centre/frontend
-  USE_RDS: ${{ vars.USE_RDS }}
+  # Secrets or Variables tab (either works).
+  USE_RDS: ${{ vars.USE_RDS || secrets.USE_RDS }}
 
 jobs:
   backend:
@@ -73,18 +76,42 @@ jobs:
     needs: [backend, frontend]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate deploy configuration
+        run: |
+          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
+            echo "::error::Repository secret AWS_ROLE_ARN is missing or empty."
+            echo "Add it under Settings → Secrets and variables → Actions → Secrets"
+            echo "Value: arn:aws:iam::956314528442:role/github-actions-fitness-centre"
+            echo "See deploy/CICD-SETUP.md (Part C)"
+            exit 1
+          fi
+          echo "AWS_ROLE_ARN is set."
+          USE_RDS="${{ vars.USE_RDS || secrets.USE_RDS }}"
+          if [ "$USE_RDS" = "true" ]; then
+            SECRET_NAME="${{ vars.FITNESS_APP_SECRET_NAME || secrets.FITNESS_APP_SECRET_NAME }}"
+            WAF_ARN="${{ vars.WAF_ACL_ARN || secrets.WAF_ACL_ARN }}"
+            test -n "$SECRET_NAME" || { echo "::error::Set FITNESS_APP_SECRET_NAME (secret or variable)"; exit 1; }
+            test -n "$WAF_ARN" || { echo "::error::Set WAF_ACL_ARN (secret or variable)"; exit 1; }
+            echo "$WAF_ARN" | grep -q '^arn:aws:wafv2:' || {
+              echo "::error::WAF_ACL_ARN must be the full ARN from: terraform output -raw waf_acl_arn"
+              echo "Do not paste the terraform command text as the value."
+              exit 1
+            }
+            echo "PRE mode (USE_RDS=true) OK."
+          else
+            echo "USE_RDS is not true — PoC mode or set USE_RDS=true (secret or variable)."
+          fi
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
@@ -154,7 +181,7 @@ jobs:
       - name: Sync secrets from AWS Secrets Manager
         if: env.USE_RDS == 'true'
         env:
-          SECRET_NAME: ${{ vars.FITNESS_APP_SECRET_NAME }}
+          SECRET_NAME: ${{ vars.FITNESS_APP_SECRET_NAME || secrets.FITNESS_APP_SECRET_NAME }}
         run: |
           test -n "$SECRET_NAME" || { echo "Set repository variable FITNESS_APP_SECRET_NAME (e.g. non-prod/fitness-centre/app)"; exit 1; }
           kubectl apply -f deploy/k8s/pre/cluster-secret-store.yaml
@@ -219,8 +246,8 @@ jobs:
       - name: Deploy Ingress (PRE — WAF / optional HTTPS)
         if: env.USE_RDS == 'true'
         env:
-          WAF_ACL_ARN: ${{ vars.WAF_ACL_ARN }}
-          ACM_CERTIFICATE_ARN: ${{ vars.ACM_CERTIFICATE_ARN }}
+          WAF_ACL_ARN: ${{ vars.WAF_ACL_ARN || secrets.WAF_ACL_ARN }}
+          ACM_CERTIFICATE_ARN: ${{ vars.ACM_CERTIFICATE_ARN || secrets.ACM_CERTIFICATE_ARN }}
         run: |
           test -n "$WAF_ACL_ARN" || { echo "Set repository variable WAF_ACL_ARN from: terraform output waf_acl_arn"; exit 1; }
           if [ -n "$ACM_CERTIFICATE_ARN" ]; then
