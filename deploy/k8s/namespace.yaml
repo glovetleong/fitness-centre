@@ -4,3 +4,4 @@ metadata:
   name: fitness-centre
   labels:
     app.kubernetes.io/name: fitness-centre
+    app.kubernetes.io/part-of: fitness-centre

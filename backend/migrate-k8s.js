@@ -14,15 +14,23 @@ const config = {
 }
 
 async function migrate() {
-  const connection = await mysql.createConnection({
-    host: config.host,
-    user: config.user,
-    password: config.password,
-    multipleStatements: true,
-  })
+  const rdsManaged = process.env.RDS_MANAGED === 'true'
 
-  await connection.query(`CREATE DATABASE IF NOT EXISTS \`${config.database}\``)
-  await connection.query(`USE \`${config.database}\``)
+  const connection = await mysql.createConnection(
+    rdsManaged
+      ? { ...config, database: config.database }
+      : {
+          host: config.host,
+          user: config.user,
+          password: config.password,
+          multipleStatements: true,
+        }
+  )
+
+  if (!rdsManaged) {
+    await connection.query(`CREATE DATABASE IF NOT EXISTS \`${config.database}\``)
+    await connection.query(`USE \`${config.database}\``)
+  }
 
   await connection.query(`
     CREATE TABLE IF NOT EXISTS members (

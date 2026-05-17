@@ -4,7 +4,8 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --check server.js && node --check db.js && node --check migrate-k8s.js"
   },
   "dependencies": {
     "@faker-js/faker": "^9.7.0",

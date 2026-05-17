@@ -1,12 +1,14 @@
-# Build fitness-centre images, push to ECR, deploy to non-prod EKS.
-# SEC: AWS access via OIDC (no access keys in the workflow file).
+# PRE-style deploy: RDS secrets via External Secrets, WAF/HTTPS ingress, no in-cluster MySQL.
+# Requires: terraform enable_rds=true, ESO installed, GitHub vars (see deploy/PRE-SETUP.md).
 
 name: Deploy non-prod
 
 on:
-  push:
-    branches: [master, main]
   workflow_dispatch:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master, main]
 
 permissions:
   id-token: write
@@ -19,13 +21,20 @@ env:
   K8S_NAMESPACE: fitness-centre
   ECR_BACKEND_REPO: fitness-centre/backend
   ECR_FRONTEND_REPO: fitness-centre/frontend
+  # PoC in-cluster DB when false; PRE mode when true (set repository variable USE_RDS=true).
+  USE_RDS: ${{ vars.USE_RDS }}
 
 jobs:
   build-and-deploy:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -34,7 +43,6 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Ensure ECR repositories exist
@@ -48,21 +56,38 @@ jobs:
         env:
           IMAGE: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_BACKEND_REPO }}
         run: |
-          TAG="${{ github.sha }}"
+          TAG="${{ github.event.workflow_run.head_sha || github.sha }}"
           docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" ./backend
           docker push "$IMAGE:$TAG"
           docker push "$IMAGE:latest"
           echo "BACKEND_IMAGE=$IMAGE:$TAG" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Trivy scan backend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.BACKEND_IMAGE }}
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
 
       - name: Build and push frontend image
         env:
           IMAGE: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_FRONTEND_REPO }}
         run: |
-          TAG="${{ github.sha }}"
+          TAG="${{ env.IMAGE_TAG }}"
           docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" ./frontend
           docker push "$IMAGE:$TAG"
           docker push "$IMAGE:latest"
           echo "FRONTEND_IMAGE=$IMAGE:$TAG" >> "$GITHUB_ENV"
+
+      - name: Trivy scan frontend image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.FRONTEND_IMAGE }}
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
@@ -71,10 +96,31 @@ jobs:
         run: |
           aws eks update-kubeconfig --name "${{ env.EKS_CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}"
 
-      - name: Apply namespace
-        run: kubectl apply -f deploy/k8s/namespace.yaml
+      - name: Apply namespace and guardrails
+        run: |
+          kubectl apply -f deploy/k8s/namespace.yaml
+          kubectl apply -f deploy/k8s/pre/namespace-guardrails.yaml
 
-      - name: Apply application secrets
+      - name: Remove legacy in-cluster MySQL (PRE / RDS)
+        if: env.USE_RDS == 'true'
+        run: |
+          kubectl delete deployment mysql -n "${{ env.K8S_NAMESPACE }}" --ignore-not-found
+          kubectl delete pvc mysql-pvc -n "${{ env.K8S_NAMESPACE }}" --ignore-not-found
+
+      - name: Sync secrets from AWS Secrets Manager
+        if: env.USE_RDS == 'true'
+        env:
+          SECRET_NAME: ${{ vars.FITNESS_APP_SECRET_NAME }}
+        run: |
+          test -n "$SECRET_NAME" || { echo "Set repository variable FITNESS_APP_SECRET_NAME (e.g. non-prod/fitness-centre/app)"; exit 1; }
+          kubectl apply -f deploy/k8s/pre/cluster-secret-store.yaml
+          sed "s|REPLACE_SECRET_MANAGER_NAME|$SECRET_NAME|g" deploy/k8s/pre/external-secret.yaml | kubectl apply -f -
+          kubectl wait --for=condition=Ready externalsecret/fitness-centre-app \
+            -n "${{ env.K8S_NAMESPACE }}" --timeout=300s
+          kubectl get secret fitness-centre-app -n "${{ env.K8S_NAMESPACE }}"
+
+      - name: Apply application secrets (PoC in-cluster DB)
+        if: env.USE_RDS != 'true'
         env:
           DB_PASS: ${{ secrets.DB_PASS }}
           MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
@@ -95,21 +141,15 @@ jobs:
           kubectl scale deployment ebs-csi-controller -n kube-system --replicas=1 || true
           kubectl rollout status deployment/ebs-csi-controller -n kube-system --timeout=120s || true
 
-      - name: Deploy MySQL PVC
-        run: kubectl apply -f deploy/k8s/mysql-pvc.yaml
-
-      - name: Deploy MySQL
-        run: kubectl apply -f deploy/k8s/mysql.yaml
-
-      - name: Wait for MySQL
+      - name: Deploy in-cluster MySQL (PoC only)
+        if: env.USE_RDS != 'true'
         run: |
+          kubectl apply -f deploy/k8s/mysql-pvc.yaml
+          kubectl apply -f deploy/k8s/mysql.yaml
           for i in $(seq 1 30); do
             if kubectl rollout status deployment/mysql -n "${{ env.K8S_NAMESPACE }}" --timeout=120s; then
-              kubectl get pods -n "${{ env.K8S_NAMESPACE }}" -l app=mysql
               exit 0
             fi
-            echo "MySQL not ready (attempt $i/30)..."
-            kubectl get pods -n "${{ env.K8S_NAMESPACE }}" -l app=mysql || true
             sleep 15
           done
           exit 1
@@ -128,10 +168,30 @@ jobs:
         run: |
           sed "s|REPLACE_BACKEND_IMAGE|${BACKEND_IMAGE}|g" deploy/k8s/backend.yaml | kubectl apply -f -
           sed "s|REPLACE_FRONTEND_IMAGE|${FRONTEND_IMAGE}|g" deploy/k8s/frontend.yaml | kubectl apply -f -
+          kubectl apply -f deploy/k8s/backend-hpa.yaml
           kubectl rollout status deployment/backend -n "${{ env.K8S_NAMESPACE }}" --timeout=300s
           kubectl rollout status deployment/frontend -n "${{ env.K8S_NAMESPACE }}" --timeout=300s
 
-      - name: Deploy Ingress (ALB)
+      - name: Deploy Ingress (PRE — WAF / optional HTTPS)
+        if: env.USE_RDS == 'true'
+        env:
+          WAF_ACL_ARN: ${{ vars.WAF_ACL_ARN }}
+          ACM_CERTIFICATE_ARN: ${{ vars.ACM_CERTIFICATE_ARN }}
+        run: |
+          test -n "$WAF_ACL_ARN" || { echo "Set repository variable WAF_ACL_ARN from: terraform output waf_acl_arn"; exit 1; }
+          if [ -n "$ACM_CERTIFICATE_ARN" ]; then
+            LISTEN='[{"HTTPS":443},{"HTTP":80}]'
+            sed -e "s|REPLACE_WAF_ACL_ARN|$WAF_ACL_ARN|g" \
+                -e "s|REPLACE_LISTEN_PORTS|$LISTEN|g" \
+                -e "s|REPLACE_SSL_REDIRECT|443|g" \
+                -e "s|REPLACE_ACM_CERT_ARN|$ACM_CERTIFICATE_ARN|g" \
+                deploy/k8s/ingress-pre.yaml | kubectl apply -f -
+          else
+            sed "s|REPLACE_WAF_ACL_ARN|$WAF_ACL_ARN|g" deploy/k8s/ingress-pre-http.yaml | kubectl apply -f -
+          fi
+
+      - name: Deploy Ingress (PoC HTTP)
+        if: env.USE_RDS != 'true'
         run: kubectl apply -f deploy/k8s/ingress.yaml
 
       - name: Deployment summary
@@ -139,6 +199,9 @@ jobs:
           echo "## Deployed images" >> "$GITHUB_STEP_SUMMARY"
           echo "- Backend: \`${BACKEND_IMAGE}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Frontend: \`${FRONTEND_IMAGE}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- USE_RDS: \`${{ env.USE_RDS }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "## Ingress" >> "$GITHUB_STEP_SUMMARY"
           kubectl get ingress -n "${{ env.K8S_NAMESPACE }}" -o wide >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          kubectl get hpa -n "${{ env.K8S_NAMESPACE }}" >> "$GITHUB_STEP_SUMMARY" || true

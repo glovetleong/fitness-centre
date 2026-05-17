@@ -6,6 +6,10 @@ metadata:
 spec:
   ttlSecondsAfterFinished: 300
   template:
+    metadata:
+      labels:
+        app: migrate
+        app.kubernetes.io/part-of: fitness-centre
     spec:
       restartPolicy: OnFailure
       containers:
