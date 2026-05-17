@@ -1,17 +1,16 @@
-# PRE-style deploy: RDS secrets via External Secrets, WAF/HTTPS ingress, no in-cluster MySQL.
-# Requires: terraform enable_rds=true, ESO installed, GitHub vars (see deploy/PRE-SETUP.md).
+# Push to master/main: test → scan → build → deploy to EKS (PRE gates in one workflow).
+# PRs: test and scan only (no deploy).
 
 name: Deploy non-prod
 
 on:
-  workflow_dispatch:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
 
 env:
@@ -21,20 +20,65 @@ env:
   K8S_NAMESPACE: fitness-centre
   ECR_BACKEND_REPO: fitness-centre/backend
   ECR_FRONTEND_REPO: fitness-centre/frontend
-  # PoC in-cluster DB when false; PRE mode when true (set repository variable USE_RDS=true).
   USE_RDS: ${{ vars.USE_RDS }}
 
 jobs:
-  build-and-deploy:
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success')
+  backend:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: fs
+          scan-ref: backend
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: fs
+          scan-ref: frontend
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+
+  build-and-deploy:
+    needs: [backend, frontend]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -56,7 +100,7 @@ jobs:
         env:
           IMAGE: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_BACKEND_REPO }}
         run: |
-          TAG="${{ github.event.workflow_run.head_sha || github.sha }}"
+          TAG="${{ github.sha }}"
           docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" ./backend
           docker push "$IMAGE:$TAG"
           docker push "$IMAGE:latest"
