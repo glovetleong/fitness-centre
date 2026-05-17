@@ -16,4 +16,7 @@ Open http://localhost:5173 — login `admin@example.com` / `admin123`
 
 ## Deploy to AWS (EKS non-prod)
 
-See **[deploy/README.md](deploy/README.md)** for Terraform, GitHub Actions variables, and verification.
+| Doc | Contents |
+|-----|----------|
+| **[deploy/README.md](deploy/README.md)** | GitHub Actions, manual kubectl deploy, app verify |
+| **[platform-infrastructure/environments/nonprod/SETUP.md](../platform-infrastructure/environments/nonprod/SETUP.md)** | Terraform, addons, destroy/rebuild, CloudWatch, troubleshooting |
