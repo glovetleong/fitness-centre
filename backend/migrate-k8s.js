@@ -1,6 +1,6 @@
 /**
  * DB migration for Kubernetes (uses env vars from Secret).
- * Run once: kubectl apply -f deploy/k8s/migrate-job.yaml
+ * Run via CI or: sed image in deploy/k8s/migrate-job.yaml | kubectl apply -f -
  */
 import mysql from 'mysql2/promise'
 import bcrypt from 'bcryptjs'

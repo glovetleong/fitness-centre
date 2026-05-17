@@ -1,4 +1,4 @@
-# PRE ingress: WAF + optional HTTPS (set REPLACE_* via deploy workflow / sed).
+# Optional: set ACM_CERTIFICATE_ARN in GitHub to use this template instead of ingress.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -9,8 +9,8 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/healthcheck-path: /
     alb.ingress.kubernetes.io/wafv2-acl-arn: REPLACE_WAF_ACL_ARN
-    alb.ingress.kubernetes.io/listen-ports: REPLACE_LISTEN_PORTS
-    alb.ingress.kubernetes.io/ssl-redirect: REPLACE_SSL_REDIRECT
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443},{"HTTP":80}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
     alb.ingress.kubernetes.io/certificate-arn: REPLACE_ACM_CERT_ARN
 spec:
   ingressClassName: alb

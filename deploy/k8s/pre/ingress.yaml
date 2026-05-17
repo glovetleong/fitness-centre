@@ -1,3 +1,4 @@
+# ALB + WAF, HTTP only (default). Optional HTTPS: deploy/k8s/pre/ingress-https.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -6,8 +7,9 @@ metadata:
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
     alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/wafv2-acl-arn: REPLACE_WAF_ACL_ARN
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
 spec:
   ingressClassName: alb
   rules:

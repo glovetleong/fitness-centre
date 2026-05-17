@@ -1,5 +1,4 @@
-# Push to master/main: test → scan → build → deploy to EKS (PRE gates in one workflow).
-# PRs: test and scan only (no deploy).
+# Test → Trivy → build → deploy to EKS (RDS + ESO + WAF). PRs: test/scan only.
 
 name: Deploy non-prod
 
@@ -10,7 +9,6 @@ on:
     branches: [master, main]
   workflow_dispatch:
 
-# SEC: id-token required for OIDC → AWS (build-and-deploy job).
 permissions:
   id-token: write
   contents: read
@@ -22,8 +20,6 @@ env:
   K8S_NAMESPACE: fitness-centre
   ECR_BACKEND_REPO: fitness-centre/backend
   ECR_FRONTEND_REPO: fitness-centre/frontend
-  # Secrets or Variables tab (either works).
-  USE_RDS: ${{ vars.USE_RDS || secrets.USE_RDS }}
 
 jobs:
   backend:
@@ -40,8 +36,7 @@ jobs:
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
       - run: npm test
-      - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@v0.36.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: backend
@@ -63,8 +58,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run build
-      - name: Trivy filesystem scan
-        uses: aquasecurity/trivy-action@v0.36.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: frontend
@@ -77,51 +71,42 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Validate deploy configuration
+      - name: Validate GitHub configuration
         run: |
-          if [ -z "${{ secrets.AWS_ROLE_ARN }}" ]; then
-            echo "::error::Repository secret AWS_ROLE_ARN is missing or empty."
-            echo "Add it under Settings → Secrets and variables → Actions → Secrets"
-            echo "Value: arn:aws:iam::956314528442:role/github-actions-fitness-centre"
-            echo "See deploy/CICD-SETUP.md (Part C)"
+          test -n "${{ secrets.AWS_ROLE_ARN }}" || {
+            echo "::error::Set secret AWS_ROLE_ARN (see deploy/README.md)"
             exit 1
-          fi
-          echo "AWS_ROLE_ARN is set."
-          USE_RDS="${{ vars.USE_RDS || secrets.USE_RDS }}"
-          if [ "$USE_RDS" = "true" ]; then
-            SECRET_NAME="${{ vars.FITNESS_APP_SECRET_NAME || secrets.FITNESS_APP_SECRET_NAME }}"
-            WAF_ARN="${{ vars.WAF_ACL_ARN || secrets.WAF_ACL_ARN }}"
-            test -n "$SECRET_NAME" || { echo "::error::Set FITNESS_APP_SECRET_NAME (secret or variable)"; exit 1; }
-            test -n "$WAF_ARN" || { echo "::error::Set WAF_ACL_ARN (secret or variable)"; exit 1; }
-            echo "$WAF_ARN" | grep -q '^arn:aws:wafv2:' || {
-              echo "::error::WAF_ACL_ARN must be the full ARN from: terraform output -raw waf_acl_arn"
-              echo "Do not paste the terraform command text as the value."
-              exit 1
-            }
-            echo "PRE mode (USE_RDS=true) OK."
-          else
-            echo "USE_RDS is not true — PoC mode or set USE_RDS=true (secret or variable)."
-          fi
+          }
+          test "${{ vars.USE_RDS || secrets.USE_RDS }}" = "true" || {
+            echo "::error::Set USE_RDS=true (variable or secret)"
+            exit 1
+          }
+          test -n "${{ vars.FITNESS_APP_SECRET_NAME || secrets.FITNESS_APP_SECRET_NAME }}" || {
+            echo "::error::Set FITNESS_APP_SECRET_NAME"
+            exit 1
+          }
+          WAF_ARN="${{ vars.WAF_ACL_ARN || secrets.WAF_ACL_ARN }}"
+          test -n "$WAF_ARN" || { echo "::error::Set WAF_ACL_ARN"; exit 1; }
+          echo "$WAF_ARN" | grep -q '^arn:aws:wafv2:' || {
+            echo "::error::WAF_ACL_ARN must be the full ARN from terraform output -raw waf_acl_arn"
+            exit 1
+          }
 
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-          audience: sts.amazonaws.com
 
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
+      - uses: aws-actions/amazon-ecr-login@v2
 
       - name: Ensure ECR repositories exist
         run: |
-          aws ecr describe-repositories --repository-names "${{ env.ECR_BACKEND_REPO }}" 2>/dev/null \
-            || aws ecr create-repository --repository-name "${{ env.ECR_BACKEND_REPO }}" --image-scanning-configuration scanOnPush=true
-          aws ecr describe-repositories --repository-names "${{ env.ECR_FRONTEND_REPO }}" 2>/dev/null \
-            || aws ecr create-repository --repository-name "${{ env.ECR_FRONTEND_REPO }}" --image-scanning-configuration scanOnPush=true
+          for repo in "${{ env.ECR_BACKEND_REPO }}" "${{ env.ECR_FRONTEND_REPO }}"; do
+            aws ecr describe-repositories --repository-names "$repo" 2>/dev/null \
+              || aws ecr create-repository --repository-name "$repo" --image-scanning-configuration scanOnPush=true
+          done
 
       - name: Build and push backend image
         env:
@@ -134,130 +119,77 @@ jobs:
           echo "BACKEND_IMAGE=$IMAGE:$TAG" >> "$GITHUB_ENV"
           echo "IMAGE_TAG=$TAG" >> "$GITHUB_ENV"
 
-      - name: Trivy scan backend image
-        uses: aquasecurity/trivy-action@v0.36.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.BACKEND_IMAGE }}
           severity: CRITICAL,HIGH
           exit-code: "1"
           ignore-unfixed: true
-          vuln-type: os,library
-          skip-files: usr/local/lib/node_modules/**
 
       - name: Build and push frontend image
         env:
           IMAGE: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_FRONTEND_REPO }}
         run: |
-          TAG="${{ env.IMAGE_TAG }}"
-          docker build -t "$IMAGE:$TAG" -t "$IMAGE:latest" ./frontend
-          docker push "$IMAGE:$TAG"
+          docker build -t "$IMAGE:${{ env.IMAGE_TAG }}" -t "$IMAGE:latest" ./frontend
+          docker push "$IMAGE:${{ env.IMAGE_TAG }}"
           docker push "$IMAGE:latest"
-          echo "FRONTEND_IMAGE=$IMAGE:$TAG" >> "$GITHUB_ENV"
+          echo "FRONTEND_IMAGE=$IMAGE:${{ env.IMAGE_TAG }}" >> "$GITHUB_ENV"
 
-      - name: Trivy scan frontend image
-        uses: aquasecurity/trivy-action@v0.36.0
+      - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.FRONTEND_IMAGE }}
           severity: CRITICAL,HIGH
           exit-code: "1"
           ignore-unfixed: true
 
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v4
-
-      - name: Install Helm
-        if: env.USE_RDS == 'true'
-        uses: azure/setup-helm@v4
+      - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-helm@v4
         with:
           version: v3.16.4
 
       - name: Update kubeconfig
-        run: |
-          aws eks update-kubeconfig --name "${{ env.EKS_CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}"
+        run: aws eks update-kubeconfig --name "${{ env.EKS_CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}"
 
       - name: Apply namespace and guardrails
         run: |
           kubectl apply -f deploy/k8s/namespace.yaml
           kubectl apply -f deploy/k8s/pre/namespace-guardrails.yaml
 
-      - name: Remove legacy in-cluster MySQL (PRE / RDS)
-        if: env.USE_RDS == 'true'
+      - name: Remove legacy in-cluster MySQL
         run: |
           kubectl delete deployment mysql -n "${{ env.K8S_NAMESPACE }}" --ignore-not-found
           kubectl delete pvc mysql-pvc -n "${{ env.K8S_NAMESPACE }}" --ignore-not-found
 
       - name: Install External Secrets Operator
-        if: env.USE_RDS == 'true'
         env:
           ESO_ROLE_ARN: ${{ vars.EXTERNAL_SECRETS_ROLE_ARN || secrets.EXTERNAL_SECRETS_ROLE_ARN }}
         run: |
           ROLE_ARN="${ESO_ROLE_ARN:-arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/non-prod-external-secrets}"
-          echo "Using ESO IRSA role: $ROLE_ARN"
           helm repo add external-secrets https://charts.external-secrets.io
           helm repo update
           helm upgrade --install external-secrets external-secrets/external-secrets \
-            --namespace external-secrets \
-            --create-namespace \
+            --namespace external-secrets --create-namespace \
             --version 0.19.2 \
             --set installCRDs=true \
             --set serviceAccount.name=external-secrets \
             --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${ROLE_ARN}" \
             --wait --timeout 10m
           kubectl wait --for=condition=Established crd/clustersecretstores.external-secrets.io --timeout=180s
-          kubectl wait --for=condition=Established crd/externalsecrets.external-secrets.io --timeout=180s
           kubectl rollout status deployment/external-secrets -n external-secrets --timeout=300s
-          kubectl api-resources --api-group=external-secrets.io
 
       - name: Sync secrets from AWS Secrets Manager
-        if: env.USE_RDS == 'true'
         env:
           SECRET_NAME: ${{ vars.FITNESS_APP_SECRET_NAME || secrets.FITNESS_APP_SECRET_NAME }}
         run: |
-          test -n "$SECRET_NAME" || { echo "Set repository variable FITNESS_APP_SECRET_NAME (e.g. non-prod/fitness-centre/app)"; exit 1; }
-          kubectl api-resources --api-group=external-secrets.io | grep -q 'clustersecretstores' || {
-            echo "::error::ClusterSecretStore CRD missing — check Install External Secrets Operator step"
-            exit 1
-          }
           kubectl apply -f deploy/k8s/pre/cluster-secret-store.yaml
           sed "s|REPLACE_SECRET_MANAGER_NAME|$SECRET_NAME|g" deploy/k8s/pre/external-secret.yaml | kubectl apply -f -
           kubectl wait --for=condition=Ready externalsecret/fitness-centre-app \
             -n "${{ env.K8S_NAMESPACE }}" --timeout=300s
-          kubectl get secret fitness-centre-app -n "${{ env.K8S_NAMESPACE }}"
 
-      - name: Apply application secrets (PoC in-cluster DB)
-        if: env.USE_RDS != 'true'
-        env:
-          DB_PASS: ${{ secrets.DB_PASS }}
-          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-        run: |
-          kubectl create secret generic fitness-centre-app \
-            --namespace="${{ env.K8S_NAMESPACE }}" \
-            --from-literal=DB_HOST=mysql \
-            --from-literal=DB_USER=fitness \
-            --from-literal=DB_PASS="$DB_PASS" \
-            --from-literal=DB_NAME=fitness_centre \
-            --from-literal=JWT_SECRET="$JWT_SECRET" \
-            --from-literal=MYSQL_ROOT_PASSWORD="$MYSQL_ROOT_PASSWORD" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Prepare node capacity (t3.small max 11 pods)
+      - name: Prepare node capacity (t3.small)
         run: |
           kubectl scale deployment ebs-csi-controller -n kube-system --replicas=1 || true
           kubectl rollout status deployment/ebs-csi-controller -n kube-system --timeout=120s || true
-
-      - name: Deploy in-cluster MySQL (PoC only)
-        if: env.USE_RDS != 'true'
-        run: |
-          kubectl apply -f deploy/k8s/mysql-pvc.yaml
-          kubectl apply -f deploy/k8s/mysql.yaml
-          for i in $(seq 1 30); do
-            if kubectl rollout status deployment/mysql -n "${{ env.K8S_NAMESPACE }}" --timeout=120s; then
-              exit 0
-            fi
-            sleep 15
-          done
-          exit 1
 
       - name: Run database migration
         run: |
@@ -274,52 +206,28 @@ jobs:
           sed "s|REPLACE_BACKEND_IMAGE|${BACKEND_IMAGE}|g" deploy/k8s/backend.yaml | kubectl apply -f -
           sed "s|REPLACE_FRONTEND_IMAGE|${FRONTEND_IMAGE}|g" deploy/k8s/frontend.yaml | kubectl apply -f -
           kubectl apply -f deploy/k8s/backend-hpa.yaml
-          kubectl rollout status deployment/backend -n "${{ env.K8S_NAMESPACE }}" --timeout=300s || {
-            kubectl get pods -n "${{ env.K8S_NAMESPACE }}" -l app=backend -o wide
-            kubectl describe pods -n "${{ env.K8S_NAMESPACE }}" -l app=backend | tail -80
-            kubectl logs -n "${{ env.K8S_NAMESPACE }}" -l app=backend --tail=80 --all-containers=true || true
-            exit 1
-          }
-          kubectl rollout status deployment/frontend -n "${{ env.K8S_NAMESPACE }}" --timeout=300s || {
-            kubectl get pods -n "${{ env.K8S_NAMESPACE }}" -l app=frontend -o wide
-            kubectl logs -n "${{ env.K8S_NAMESPACE }}" -l app=frontend --tail=50 || true
-            exit 1
-          }
+          kubectl rollout status deployment/backend -n "${{ env.K8S_NAMESPACE }}" --timeout=300s
+          kubectl rollout status deployment/frontend -n "${{ env.K8S_NAMESPACE }}" --timeout=300s
 
-      - name: Deploy Ingress (PRE — WAF / optional HTTPS)
-        if: env.USE_RDS == 'true'
+      - name: Deploy Ingress
         env:
           WAF_ACL_ARN: ${{ vars.WAF_ACL_ARN || secrets.WAF_ACL_ARN }}
           ACM_CERTIFICATE_ARN: ${{ vars.ACM_CERTIFICATE_ARN || secrets.ACM_CERTIFICATE_ARN }}
         run: |
-          test -n "$WAF_ACL_ARN" || { echo "Set repository variable WAF_ACL_ARN from: terraform output waf_acl_arn"; exit 1; }
           if [ -n "$ACM_CERTIFICATE_ARN" ]; then
-            LISTEN='[{"HTTPS":443},{"HTTP":80}]'
             sed -e "s|REPLACE_WAF_ACL_ARN|$WAF_ACL_ARN|g" \
-                -e "s|REPLACE_LISTEN_PORTS|$LISTEN|g" \
-                -e "s|REPLACE_SSL_REDIRECT|443|g" \
                 -e "s|REPLACE_ACM_CERT_ARN|$ACM_CERTIFICATE_ARN|g" \
-                deploy/k8s/ingress-pre.yaml | kubectl apply -f -
+                deploy/k8s/pre/ingress-https.yaml | kubectl apply -f -
           else
-            echo "HTTP-only ingress (no ACM_CERTIFICATE_ARN)."
-            sed "s|REPLACE_WAF_ACL_ARN|$WAF_ACL_ARN|g" deploy/k8s/ingress-pre-http.yaml | kubectl apply -f -
+            sed "s|REPLACE_WAF_ACL_ARN|$WAF_ACL_ARN|g" deploy/k8s/pre/ingress.yaml | kubectl apply -f -
             kubectl annotate ingress fitness-centre -n "${{ env.K8S_NAMESPACE }}" \
               alb.ingress.kubernetes.io/ssl-redirect- \
               alb.ingress.kubernetes.io/certificate-arn- --overwrite || true
           fi
 
-      - name: Deploy Ingress (PoC HTTP)
-        if: env.USE_RDS != 'true'
-        run: kubectl apply -f deploy/k8s/ingress.yaml
-
       - name: Deployment summary
         run: |
-          echo "## Deployed images" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Deployed" >> "$GITHUB_STEP_SUMMARY"
           echo "- Backend: \`${BACKEND_IMAGE}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Frontend: \`${FRONTEND_IMAGE}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- USE_RDS: \`${{ env.USE_RDS }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "## Ingress" >> "$GITHUB_STEP_SUMMARY"
-          kubectl get ingress -n "${{ env.K8S_NAMESPACE }}" -o wide >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          kubectl get hpa -n "${{ env.K8S_NAMESPACE }}" >> "$GITHUB_STEP_SUMMARY" || true
+          kubectl get ingress,pods,hpa -n "${{ env.K8S_NAMESPACE }}" >> "$GITHUB_STEP_SUMMARY"
