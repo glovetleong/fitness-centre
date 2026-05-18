@@ -14,9 +14,9 @@ cd frontend && cp .env.example .env && npm install && npm run dev
 
 Open http://localhost:5173 — login `admin@example.com` / `admin123`
 
-## Deploy to AWS (EKS non-prod)
+## Deploy to AWS (EKS dev)
 
 | Doc | Contents |
 |-----|----------|
 | **[deploy/README.md](deploy/README.md)** | GitHub Actions, manual kubectl deploy, app verify |
-| **[platform-infrastructure/environments/nonprod/SETUP.md](../platform-infrastructure/environments/nonprod/SETUP.md)** | Terraform, addons, destroy/rebuild, CloudWatch, troubleshooting |
+| **[platform-infrastructure/environments/dev/SETUP.md](../platform-infrastructure/environments/dev/SETUP.md)** | Terraform, addons, destroy/rebuild, CloudWatch, troubleshooting |

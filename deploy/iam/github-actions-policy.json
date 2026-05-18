@@ -34,7 +34,7 @@
       "Action": [
         "eks:DescribeCluster"
       ],
-      "Resource": "arn:aws:eks:ap-southeast-1:956314528442:cluster/non-prod-eks"
+      "Resource": "arn:aws:eks:ap-southeast-1:956314528442:cluster/dev-eks"
     }
   ]
 }

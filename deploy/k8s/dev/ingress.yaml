@@ -1,4 +1,4 @@
-# ALB + WAF, HTTP only (default). Optional HTTPS: deploy/k8s/pre/ingress-https.yaml
+# ALB + WAF, HTTP only (default). Optional HTTPS: deploy/k8s/dev/ingress-https.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

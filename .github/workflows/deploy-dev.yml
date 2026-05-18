@@ -1,6 +1,6 @@
 # Test → Trivy → build → deploy to EKS (RDS + ESO + WAF). PRs: test/scan only.
 
-name: Deploy non-prod
+name: Deploy dev
 
 on:
   push:
@@ -16,7 +16,7 @@ permissions:
 env:
   AWS_REGION: ap-southeast-1
   AWS_ACCOUNT_ID: "956314528442"
-  EKS_CLUSTER_NAME: non-prod-eks
+  EKS_CLUSTER_NAME: dev-eks
   K8S_NAMESPACE: fitness-centre
   ECR_BACKEND_REPO: fitness-centre/backend
   ECR_FRONTEND_REPO: fitness-centre/frontend
@@ -70,6 +70,7 @@ jobs:
     needs: [backend, frontend]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    environment: dev
     steps:
       - uses: actions/checkout@v4
 
@@ -153,7 +154,7 @@ jobs:
       - name: Apply namespace and guardrails
         run: |
           kubectl apply -f deploy/k8s/namespace.yaml
-          kubectl apply -f deploy/k8s/pre/namespace-guardrails.yaml
+          kubectl apply -f deploy/k8s/dev/namespace-guardrails.yaml
 
       - name: Remove legacy in-cluster MySQL
         run: |
@@ -164,7 +165,7 @@ jobs:
         env:
           ESO_ROLE_ARN: ${{ vars.EXTERNAL_SECRETS_ROLE_ARN || secrets.EXTERNAL_SECRETS_ROLE_ARN }}
         run: |
-          ROLE_ARN="${ESO_ROLE_ARN:-arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/non-prod-external-secrets}"
+          ROLE_ARN="${ESO_ROLE_ARN:-arn:aws:iam::${{ env.AWS_ACCOUNT_ID }}:role/dev-external-secrets}"
           helm repo add external-secrets https://charts.external-secrets.io
           helm repo update
           helm upgrade --install external-secrets external-secrets/external-secrets \
@@ -181,8 +182,8 @@ jobs:
         env:
           SECRET_NAME: ${{ vars.FITNESS_APP_SECRET_NAME || secrets.FITNESS_APP_SECRET_NAME }}
         run: |
-          kubectl apply -f deploy/k8s/pre/cluster-secret-store.yaml
-          sed "s|REPLACE_SECRET_MANAGER_NAME|$SECRET_NAME|g" deploy/k8s/pre/external-secret.yaml | kubectl apply -f -
+          kubectl apply -f deploy/k8s/dev/cluster-secret-store.yaml
+          sed "s|REPLACE_SECRET_MANAGER_NAME|$SECRET_NAME|g" deploy/k8s/dev/external-secret.yaml | kubectl apply -f -
           kubectl wait --for=condition=Ready externalsecret/fitness-centre-app \
             -n "${{ env.K8S_NAMESPACE }}" --timeout=300s
 
@@ -217,9 +218,9 @@ jobs:
           if [ -n "$ACM_CERTIFICATE_ARN" ]; then
             sed -e "s|REPLACE_WAF_ACL_ARN|$WAF_ACL_ARN|g" \
                 -e "s|REPLACE_ACM_CERT_ARN|$ACM_CERTIFICATE_ARN|g" \
-                deploy/k8s/pre/ingress-https.yaml | kubectl apply -f -
+                deploy/k8s/dev/ingress-https.yaml | kubectl apply -f -
           else
-            sed "s|REPLACE_WAF_ACL_ARN|$WAF_ACL_ARN|g" deploy/k8s/pre/ingress.yaml | kubectl apply -f -
+            sed "s|REPLACE_WAF_ACL_ARN|$WAF_ACL_ARN|g" deploy/k8s/dev/ingress.yaml | kubectl apply -f -
             kubectl annotate ingress fitness-centre -n "${{ env.K8S_NAMESPACE }}" \
               alb.ingress.kubernetes.io/ssl-redirect- \
               alb.ingress.kubernetes.io/certificate-arn- --overwrite || true
