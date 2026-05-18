@@ -146,7 +146,14 @@ jobs:
           version: v3.16.4
 
       - name: Update kubeconfig
-        run: aws eks update-kubeconfig --name "${{ env.EKS_CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}"
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ env.EKS_CLUSTER_NAME }}" \
+            --region "${{ env.AWS_REGION }}" \
+            --role-arn "$AWS_ROLE_ARN"
+          kubectl cluster-info
 
       - name: Apply namespace and guardrails
         run: |

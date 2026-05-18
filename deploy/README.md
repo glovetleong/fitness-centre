@@ -105,6 +105,25 @@ Cluster addons: `platform-infrastructure/environments/dev/scripts/install-platfo
 
 ---
 
+## GitHub Actions: kubectl “provide credentials”
+
+After **rebuilding** `dev-eks`, recreate the EKS access entry for `github-actions-fitness-centre`:
+
+```powershell
+$env:AWS_PROFILE = "nonprod"
+$Role = "arn:aws:iam::956314528442:role/github-actions-fitness-centre"
+aws eks create-access-entry --cluster-name dev-eks --principal-arn $Role --type STANDARD --region ap-southeast-1
+aws eks associate-access-policy --cluster-name dev-eks --principal-arn $Role `
+  --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy `
+  --access-scope type=cluster --region ap-southeast-1
+```
+
+Or `terraform apply` in `platform-infrastructure/environments/dev` (includes `github-ci-eks-access.tf`).
+
+Re-run failed **Deploy dev** workflow after fixing.
+
+---
+
 ## Destroy / rebuild
 
 `platform-infrastructure/environments/dev/docs/SETUP.md` → Part 6.
