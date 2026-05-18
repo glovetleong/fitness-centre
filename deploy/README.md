@@ -1,9 +1,9 @@
 # Deploy fitness-centre to EKS (dev)
 
-Push to `master` → GitHub Actions builds images, deploys to `dev-eks`, syncs secrets from AWS Secrets Manager.
+Push to branch **`dev`** → GitHub Actions builds images, deploys to `dev-eks`, syncs secrets from AWS Secrets Manager.
 
-Platform setup (Terraform, addons, destroy/rebuild):  
-`platform-infrastructure/environments/dev/SETUP.md`
+Platform setup (SSO login, apply, destroy):  
+`platform-infrastructure/environments/dev/docs/SETUP.md` → **Quick runbook** section
 
 Per-file guide: `deploy/k8s/dev/FILE-DETAIL.md`
 
@@ -17,7 +17,8 @@ Per-file guide: `deploy/k8s/dev/FILE-DETAIL.md`
 | Data | RDS MySQL + Secrets Manager `dev/fitness-centre/app` |
 | Secrets in K8s | External Secrets Operator → `fitness-centre-app` |
 | Ingress | ALB + WAF (`deploy/k8s/dev/ingress.yaml`) |
-| CI/CD | `.github/workflows/deploy-dev.yml` |
+| CI | `.github/workflows/ci.yml` (PR → `dev` — test/scan only) |
+| Deploy | `.github/workflows/deploy-dev.yml` (push to `dev` or manual **Deploy dev**) |
 | Observability | CloudWatch dashboard `dev-fitness-platform` + SNS alarms |
 
 ---
@@ -45,9 +46,15 @@ After each `terraform apply`, refresh **`WAF_ACL_ARN`** (new ARN every rebuild).
 
 ---
 
-## Deploy via CI
+## CI vs deploy (branch `dev`)
 
-Push to `master` / `main`, or run workflow **Deploy dev** (uses GitHub Environment `dev`).
+| Event | Workflow | What runs |
+|-------|----------|-----------|
+| **PR** into `dev` | **CI** | `npm test`, build, Trivy — **no AWS, no deploy** |
+| **Push** to `dev` | **Deploy dev** | Tests + build images + push ECR + deploy to `dev-eks` |
+| Manual: Actions → **Deploy dev** → Run | **Deploy dev** | Same as push (pick branch `dev`) |
+
+Default integration branch: **`dev`** (not `main`).
 
 ---
 
@@ -100,7 +107,7 @@ Cluster addons: `platform-infrastructure/environments/dev/scripts/install-platfo
 
 ## Destroy / rebuild
 
-`platform-infrastructure/environments/dev/SETUP.md` → Part 6.
+`platform-infrastructure/environments/dev/docs/SETUP.md` → Part 6.
 
 ---
 

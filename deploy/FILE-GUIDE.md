@@ -47,7 +47,7 @@ deploy/
 | File | Purpose |
 |------|---------|
 | **namespace.yaml** | Namespace `fitness-centre`. |
-| **backend.yaml** | API Deployment/Service; env from secret; `runAsUser: 1000`; `Recreate` strategy. |
+| **backend.yaml** | API Deployment/Service; env from secret; `runAsUser: 1000`; `Recreate` strategy (not blue-green — see platform `docs/CURRENT-ARCHITECTURE.md` §10). |
 | **frontend.yaml** | nginx frontend; image placeholder replaced by CI. |
 | **migrate-job.yaml** | One-shot schema + seed (`admin@example.com` / `admin123`). |
 | **backend-hpa.yaml** | HPA 1–3 replicas on CPU. |

@@ -19,4 +19,4 @@ Open http://localhost:5173 — login `admin@example.com` / `admin123`
 | Doc | Contents |
 |-----|----------|
 | **[deploy/README.md](deploy/README.md)** | GitHub Actions, manual kubectl deploy, app verify |
-| **[platform-infrastructure/environments/dev/SETUP.md](../platform-infrastructure/environments/dev/SETUP.md)** | Terraform, addons, destroy/rebuild, CloudWatch, troubleshooting |
+| **[platform-infrastructure/environments/dev/docs/SETUP.md](../platform-infrastructure/environments/dev/docs/SETUP.md)** | Terraform, addons, destroy/rebuild, CloudWatch, troubleshooting |

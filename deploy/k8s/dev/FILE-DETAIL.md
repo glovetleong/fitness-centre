@@ -19,6 +19,8 @@ CI workflow **Deploy dev** applies: namespace → **this folder** → base app f
 
 ## How traffic flows
 
+See platform diagram: `platform-infrastructure/environments/dev/docs/CURRENT-ARCHITECTURE.md` (sections 2–3).
+
 ```text
 User browser
     → WAF (dev-fitness-alb)
@@ -205,4 +207,4 @@ kubectl get networkpolicy -n fitness-centre
 | ESO IAM role (Helm) | `external_secrets_role_arn` |
 | Cluster | `dev-eks` |
 
-Platform guide: `platform-infrastructure/environments/dev/FILE-DETAIL.md`
+Platform guide: `platform-infrastructure/environments/dev/docs/FILE-DETAIL.md`

@@ -1,12 +1,10 @@
-# Test → Trivy → build → deploy to EKS (RDS + ESO + WAF). PRs: test/scan only.
+# Push to branch dev → test, build, deploy to dev-eks. PRs use ci.yml only.
 
 name: Deploy dev
 
 on:
   push:
-    branches: [master, main]
-  pull_request:
-    branches: [master, main]
+    branches: [dev]
   workflow_dispatch:
 
 permissions:
@@ -68,7 +66,6 @@ jobs:
 
   build-and-deploy:
     needs: [backend, frontend]
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment: dev
     steps:
@@ -215,12 +212,32 @@ jobs:
           WAF_ACL_ARN: ${{ vars.WAF_ACL_ARN || secrets.WAF_ACL_ARN }}
           ACM_CERTIFICATE_ARN: ${{ vars.ACM_CERTIFICATE_ARN || secrets.ACM_CERTIFICATE_ARN }}
         run: |
-          if [ -n "$ACM_CERTIFICATE_ARN" ]; then
-            sed -e "s|REPLACE_WAF_ACL_ARN|$WAF_ACL_ARN|g" \
-                -e "s|REPLACE_ACM_CERT_ARN|$ACM_CERTIFICATE_ARN|g" \
-                deploy/k8s/dev/ingress-https.yaml | kubectl apply -f -
+          set -euo pipefail
+          WAF_ACL_ARN="${WAF_ACL_ARN//$'\r'/}"
+          WAF_ACL_ARN="${WAF_ACL_ARN//$'\n'/}"
+          WAF_ACL_ARN="${WAF_ACL_ARN#\"}"; WAF_ACL_ARN="${WAF_ACL_ARN%\"}"
+          WAF_ACL_ARN="${WAF_ACL_ARN#"${WAF_ACL_ARN%%[![:space:]]*}"}"
+          WAF_ACL_ARN="${WAF_ACL_ARN%"${WAF_ACL_ARN##*[![:space:]]}"}"
+          if ! printf '%s' "$WAF_ACL_ARN" | grep -qE '^arn:aws:wafv2:'; then
+            echo "::error::WAF_ACL_ARN must be the full ARN from: terraform output -raw waf_acl_arn (no quotes)"
+            exit 1
+          fi
+          render_ingress() {
+            python3 - "$1" "$WAF_ACL_ARN" "${ACM_CERTIFICATE_ARN:-}" <<'PY'
+          import sys
+          path, waf, acm = sys.argv[1], sys.argv[2], sys.argv[3]
+          with open(path) as f:
+              text = f.read()
+          text = text.replace("REPLACE_WAF_ACL_ARN", waf)
+          if acm:
+              text = text.replace("REPLACE_ACM_CERT_ARN", acm.strip().strip('"').strip("'"))
+          sys.stdout.write(text)
+          PY
+          }
+          if [ -n "${ACM_CERTIFICATE_ARN:-}" ]; then
+            render_ingress deploy/k8s/dev/ingress-https.yaml | kubectl apply -f -
           else
-            sed "s|REPLACE_WAF_ACL_ARN|$WAF_ACL_ARN|g" deploy/k8s/dev/ingress.yaml | kubectl apply -f -
+            render_ingress deploy/k8s/dev/ingress.yaml | kubectl apply -f -
             kubectl annotate ingress fitness-centre -n "${{ env.K8S_NAMESPACE }}" \
               alb.ingress.kubernetes.io/ssl-redirect- \
               alb.ingress.kubernetes.io/certificate-arn- --overwrite || true
