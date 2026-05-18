@@ -16,3 +16,9 @@ const layout = computed(() => {
   return noLayoutRoutes.includes(route.path) ? 'div' : DefaultLayout
 })
 </script>
+
+<style>
+body {
+  background-color: #e3f2fd;
+}
+</style>
