@@ -146,13 +146,12 @@ jobs:
           version: v3.16.4
 
       - name: Update kubeconfig
-        env:
-          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
         run: |
+          # OIDC already assumed github-actions-fitness-centre — do NOT pass --role-arn
+          # (would try sts:AssumeRole again and fail with AccessDenied).
           aws eks update-kubeconfig \
             --name "${{ env.EKS_CLUSTER_NAME }}" \
-            --region "${{ env.AWS_REGION }}" \
-            --role-arn "$AWS_ROLE_ARN"
+            --region "${{ env.AWS_REGION }}"
           kubectl cluster-info
 
       - name: Apply namespace and guardrails

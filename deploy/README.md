@@ -120,6 +120,8 @@ aws eks associate-access-policy --cluster-name dev-eks --principal-arn $Role `
 
 Or `terraform apply` in `platform-infrastructure/environments/dev` (includes `github-ci-eks-access.tf`).
 
+**Do not** use `aws eks update-kubeconfig --role-arn` in CI when OIDC already assumed that role — it causes `sts:AssumeRole` AccessDenied. Use plain `update-kubeconfig`; EKS access entry grants kubectl access.
+
 Re-run failed **Deploy dev** workflow after fixing.
 
 ---
