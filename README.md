@@ -16,6 +16,8 @@ Open http://localhost:5173 — login `admin@example.com` / `admin123`
 
 ## Deploy to AWS (EKS dev)
 
+CI: pull requests to `dev` run tests only; push to `dev` runs full deploy (see `deploy/README.md`).
+
 | Doc | Contents |
 |-----|----------|
 | **[deploy/README.md](deploy/README.md)** | GitHub Actions, manual kubectl deploy, app verify |
