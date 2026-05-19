@@ -5,6 +5,12 @@ Push to branch **`dev`** → GitHub Actions builds images, deploys to `dev-eks`,
 Platform setup (SSO login, apply, destroy):  
 `platform-infrastructure/environments/dev/docs/SETUP.md` → **Quick runbook** section
 
+Secrets (Secrets Manager → ESO → pods):  
+`platform-infrastructure/environments/dev/docs/SECRETS-MANAGER.md`
+
+GitHub Actions → AWS (OIDC, ECR, EKS):  
+`platform-infrastructure/environments/dev/docs/GITHUB-ACTIONS-AWS.md`
+
 Per-file guide: `deploy/k8s/dev/FILE-DETAIL.md`
 
 ---
