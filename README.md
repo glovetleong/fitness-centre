@@ -4,9 +4,6 @@ Vue 3 frontend + Express API + MySQL.
 
 ## Local development
 
-
-
-
 ```bash
 # Backend
 cd backend && cp .env.example .env && npm install && node migrate.js && npm start
